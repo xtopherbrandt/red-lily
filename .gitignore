@@ -1,0 +1,8 @@
+env*/
+build/
+dist/
+*.pyc
+*.egg-info/
+*.egg/
+docs/_build/
+test.ini
