@@ -35,12 +35,15 @@ def saveDataPoint(raceActivity):
             workout['distance'] = activity.distance
             workout['average_speed'] = activity.average_speed
             workout['total_time'] = activity.elapsed_time
-            
-            workout_stream = client.get_activity_streams(activity_id = activity.id, types=['time','distance','altitude', 'velocity_smooth','heartrate','cadence','grade_smooth'], resolution='high')
-            for stream_type in workout_stream.keys():
-                workout['{0}_stream'.format(stream_type)] = workout_stream[stream_type].data
 
-            dataPointFeatures['workout_set'].append(workout)
+            try:
+                workout_stream = client.get_activity_streams(activity_id = activity.id, types=['time','distance','altitude', 'velocity_smooth','heartrate','cadence','grade_smooth'], resolution='high')
+                for stream_type in workout_stream.keys():
+                    workout['{0}_stream'.format(stream_type)] = workout_stream[stream_type].data
+
+                dataPointFeatures['workout_set'].append(workout)
+            except HTTPError as e:
+                app.logger.debug('Http Error while trying to get streams for activity {0}\n{1}'.format(activity.id, e))
     
     app.logger.debug('  ...{0} workouts in this data point'.format(len(dataPointFeatures['workout_set'])))
     
@@ -98,15 +101,12 @@ def generateDataPoints():
     try:
         app.logger.debug('Searching...')
         activity_set = client.get_activities( )
+        
         for activity in activity_set:
-            
             if activity.workout_type == '1' :
                 app.logger.debug('Found Race : {0} - {1}'.format( activity.name, activity.start_date))
                 saveDataPoint(activity)
         return "OK"
-    except HTTPError:
-        app.logger.debug("Reauthorizing...")
-        return redirect(url_for('authorize'))
     except Exception as e:
         app.logger.debug(e)
         return str(e)

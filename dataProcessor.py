@@ -1,92 +1,156 @@
 #!/usr/bin/python
 
 import pickle
-import sys
+import sys, os
 from units import * 
 sys.path.append("./tools/")
 from feature_format import featureFormat, targetFeatureSplit
 
-def medianBinFunction (point0, point1):
-    """
-    Simple function to find the bin and duration given two consecutive points
-    :param point0: a tuple (measuredValue, time)
-    :param point1: a tuple (measuredValue, time)
-    :return: binValue, duration
-    """
-    if point0 is None or point1 is None:
-        return None, None
+class DataProcessor:
 
-    binValue = ( point1[0] - point0[0] ) / 2 + point0[0]
-    duration = point1[1] - point0[1]
-    return binValue, duration
+    _dataDirectory = ''
+    _outputFileName = ''
 
-def binMeasurements(bin_dict, measurementStream, timeStream, binPrefix ):
-    """
-    Iterates a stream of measurements, adding the time spent at each measured
-    value to a bin for the measured value. Bins are added as items to the bin_dict
-    with the name as binPrefix_measuredValue ie, velocity_3.5
-
-    :param bin_dict: the dictionary to add the bins to. This is the data point.
-    :param measurementStream: an array of measurement values. Must have the same length as timeStream.abs
-    :param timeStream: an array of time values.
-    :param binPrefix: the name of the bin class
-    """
-    point0 = None
-    point1 = None
-
-    for point in zip( measurementStream, timeStream ):
-        point0 = point1
-        point1 = point
-        binValue, duration = medianBinFunction( point0, point1 )
-
-        if binValue is not None:
-            binName = '{0}_{1}'.format(binPrefix, round(binValue,1))
-
-            if binName not in bin_dict :
-                bin_dict[binName] = duration
-            else :
-                bin_dict[binName] += duration
-
-### read in data dictionary, convert to numpy array
-data_dict = pickle.load( open("20160605153022.pkl", "r") )
-#features = ["poi", "salary", "total_payments", 'bonus', 'deferred_income', 'total_stock_value', 'expenses', 'exercised_stock_options', 'other', 'long_term_incentive', 'restricted_stock','to_messages', 'from_poi_to_this_person', 'from_messages', 'from_this_person_to_poi', 'shared_receipt_with_poi']
-
-# Normalize / flatten this data point
-data_point = {}
-data_point['race_date'] = data_dict['race_date'].isoformat()
-data_point['race_distance'] = float( data_dict['race_distance'] )
-data_point['race_speed'] = float( data_dict['race_speed'] )
-data_point['workout_count'] = 0
-data_point['workout_distance'] = 0.0
-data_point['workout_duration'] = 0
-
-# for each workout in the data dictionary
-#   add time spent to each measurement bin
-
-for workout in data_dict['workout_set']:
-    # Add to the overall summaries
-    data_point['workout_count'] += 1
-    data_point['workout_distance'] += float( workout['distance'] )
-    #data_point['workout_duration'] += workout['total_time']
-    
-    binMeasurements(data_point, workout['velocity_smooth_stream'], workout['time_stream'], 'velocity')
-
-print data_point
-
-### Tests 
-###
-timeSum1 = 0
-for feature in data_point:
-    
-    if feature.find('velocity_')==0:
+    def __init__( self, dataDirectory, outputFileName ):
+        if os.path.isdir( dataDirectory ):
+            self._dataDirectory = dataDirectory
         
-        timeSum1 += data_point[feature]
-        print '{0},{1}'.format(feature, data_point[feature])
+        if outputFileName is not None:
+            self._outputFileName = outputFileName
 
-print 'Sum of velocity times:', timeSum1
+    def Process(self):
+        files = os.listdir( self._dataDirectory )
+        data_dict = {}
+        
+        # For each file in the directory
+        for next_file in files:
+            fileParts = os.path.splitext(next_file)
+            if fileParts[0].find(self._outputFileName) == -1 and fileParts[1] == '.pkl':
+                data_point = DataProcessor.ProcessDataPointFile( next_file )
+                data_dict[data_point['race_date']] = data_point
+            
+        with open(self._outputFileName, "w") as data_outfile:
+            pickle.dump(data_dict, data_outfile)
+        
+        print
+        print '================='
+        print data_dict
 
-timeSum2 = 0
-for workout in data_dict['workout_set']:
-    timeSum2 += workout['time_stream'][len(workout['time_stream'])-1]
+    @staticmethod
+    def medianBinFunction (point0, point1):
+        """
+        Simple function to find the bin and duration given two consecutive points
+        :param point0: a tuple (measuredValue, time)
+        :param point1: a tuple (measuredValue, time)
+        :return: binValue, duration
+        """
+        if point0 is None or point1 is None:
+            return None, None
 
-print 'Sum of workout times:', timeSum2
+        binValue = ( point1[0] - point0[0] ) / 2 + point0[0]
+        duration = point1[1] - point0[1]
+        return binValue, duration
+
+    @staticmethod
+    def binMeasurements( bin_dict, measurementStream, timeStream, binPrefix, minAllowed = None, maxAllowed = None ):
+        """
+        Iterates a stream of measurements, adding the time spent at each measured
+        value to a bin for the measured value. Bins are added as items to the bin_dict
+        with the name as binPrefix_measuredValue ie, velocity_3.5
+
+        :param bin_dict: the dictionary to add the bins to. This is the data point.
+        
+        :param measurementStream: an array of measurement values. Must have the same length as timeStream.abs
+        
+        :param timeStream: an array of time values.
+        
+        :param binPrefix: the name of the bin class
+
+        :param minAllowed: the allowed lower end of the measurement range. 
+                            Values below the min will be tossed.
+                            None indicates no minimum bound
+        
+        :param maxAllowed: the allowed upper end of the measurement range. 
+                            Values above the max will be tossed.
+                            None indicates no maximum bound
+        """
+        point0 = None
+        point1 = None
+
+        for point in zip( measurementStream, timeStream ):
+            point0 = point1
+            point1 = point
+            binValue, duration = DataProcessor.medianBinFunction( point0, point1 )
+
+            # if we have a lower bound and the bin is below it, toss the value
+            if minAllowed is not None and binValue < minAllowed :
+                print 'Tossing value {0} from measurements for {1}'.format(binValue, binPrefix)
+                binValue = None
+
+            # if we have a upper bound and the bin is above it, toss the value
+            if maxAllowed is not None and binValue > maxAllowed :
+                print 'Tossing value {0} from measurements for {1}'.format(binValue, binPrefix)
+                binValue = None
+
+            if binValue is not None:
+                binName = '{0}_{1}'.format(binPrefix, round(binValue,1))
+
+                if binName not in bin_dict :
+                    bin_dict[binName] = duration
+                else :
+                    bin_dict[binName] += duration
+
+    @staticmethod
+    def ProcessDataPointFile(file):
+        print
+        print 'Processing file:', file
+        ### read in data dictionary, convert to numpy array
+        data_dict = pickle.load( open(file, "r") )
+        #features = ["poi", "salary", "total_payments", 'bonus', 'deferred_income', 'total_stock_value', 'expenses', 'exercised_stock_options', 'other', 'long_term_incentive', 'restricted_stock','to_messages', 'from_poi_to_this_person', 'from_messages', 'from_this_person_to_poi', 'shared_receipt_with_poi']
+
+        # Normalize / flatten this data point
+        data_point = {}
+        data_point['race_date'] = data_dict['race_date'].isoformat()
+        data_point['race_distance'] = float( data_dict['race_distance'] )
+        data_point['race_speed'] = float( data_dict['race_speed'] )
+        data_point['workout_count'] = 0
+        data_point['workout_distance'] = 0.0
+        data_point['workout_duration'] = 0
+
+        # for each workout in the data dictionary
+        #   add time spent to each measurement bin
+
+        for workout in data_dict['workout_set']:
+            # Add to the overall summaries
+            data_point['workout_count'] += 1
+            data_point['workout_distance'] += float( workout['distance'] )
+            data_point['workout_duration'] += workout['total_time'].total_seconds()
+            
+            if 'velocity_smooth_stream' in workout:
+                DataProcessor.binMeasurements(data_point, workout['velocity_smooth_stream'], workout['time_stream'], 'velocity', minAllowed=1.0, maxAllowed=10.0 )
+            if 'cadence_stream' in workout:
+                DataProcessor.binMeasurements(data_point, workout['cadence_stream'], workout['time_stream'], 'cadence')
+            
+        print data_point
+        DataProcessor._sanityCheck( data_point, data_dict )
+
+        return data_point
+
+    @staticmethod
+    def _sanityCheck(processed_data_point, data_point_dict):
+        ### Tests 
+        ###
+        timeSum1 = 0
+        for feature in processed_data_point:
+            
+            if feature.find('velocity_')==0:
+                
+                timeSum1 += processed_data_point[feature]
+
+        print 'Sum of velocity times:', timeSum1
+
+        timeSum2 = 0
+        for workout in data_point_dict['workout_set']:
+            timeSum2 += workout['time_stream'][len(workout['time_stream'])-1]
+
+        print 'Sum of workout times:', timeSum2
