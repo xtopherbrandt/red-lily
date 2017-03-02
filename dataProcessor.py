@@ -3,8 +3,7 @@
 import pickle
 import sys, os
 from units import * 
-sys.path.append("./tools/")
-from feature_format import featureFormat, targetFeatureSplit
+import numpy as np
 
 class DataProcessor:
 
@@ -29,7 +28,7 @@ class DataProcessor:
                 data_point = DataProcessor.ProcessDataPointFile( next_file )
                 data_dict[data_point['race_date']] = data_point
             
-        with open(self._outputFileName, "w") as data_outfile:
+        with open('{0}.pkl'.format(self._outputFileName), "w") as data_outfile:
             pickle.dump(data_dict, data_outfile)
         
         print
@@ -52,7 +51,7 @@ class DataProcessor:
         return binValue, duration
 
     @staticmethod
-    def binMeasurements( bin_dict, measurementStream, timeStream, binPrefix, minAllowed = None, maxAllowed = None ):
+    def binMeasurements( bin_dict, measurementStream, timeStream, binPrefix, rangeMin, rangeMax, binIncrement ):
         """
         Iterates a stream of measurements, adding the time spent at each measured
         value to a bin for the measured value. Bins are added as items to the bin_dict
@@ -66,39 +65,41 @@ class DataProcessor:
         
         :param binPrefix: the name of the bin class
 
-        :param minAllowed: the allowed lower end of the measurement range. 
+        :param rangeMin: the lower end of the measurement range. 
                             Values below the min will be tossed.
-                            None indicates no minimum bound
         
-        :param maxAllowed: the allowed upper end of the measurement range. 
-                            Values above the max will be tossed.
-                            None indicates no maximum bound
+        :param rangeMax: the upper end of the measurement range. 
+                            Values equal to or above the max will be tossed.
+        
+        :param binIncrement: the increment in measurement values between bins
         """
         point0 = None
         point1 = None
 
+        # create an array of bin edges
+        bin_edges = np.linspace( rangeMin, rangeMax, ((rangeMax - rangeMin)/binIncrement) + 1 )
+
+        # Add the range of bins to the dictionary. 
+        #   the name of each bin uses the bin index, not its measurement value
+        for binIndex in range(bin_edges.size - 1):
+            binName = '{0}_{1}-{2}'.format(binPrefix, bin_edges[binIndex], bin_edges[binIndex+1])
+            bin_dict[binName] = 0
+
+        # Go through the stream and get the bin value and duration for each increment
         for point in zip( measurementStream, timeStream ):
             point0 = point1
             point1 = point
-            binValue, duration = DataProcessor.medianBinFunction( point0, point1 )
+            measurementValue, duration = DataProcessor.medianBinFunction( point0, point1 )
 
-            # if we have a lower bound and the bin is below it, toss the value
-            if minAllowed is not None and binValue < minAllowed :
-                print 'Tossing value {0} from measurements for {1}'.format(binValue, binPrefix)
-                binValue = None
-
-            # if we have a upper bound and the bin is above it, toss the value
-            if maxAllowed is not None and binValue > maxAllowed :
-                print 'Tossing value {0} from measurements for {1}'.format(binValue, binPrefix)
-                binValue = None
-
-            if binValue is not None:
-                binName = '{0}_{1}'.format(binPrefix, round(binValue,1))
-
-                if binName not in bin_dict :
-                    bin_dict[binName] = duration
-                else :
+            # If we got a valid result, add it to the appropriate bin in the dictionary
+            if measurementValue is not None:
+                try:
+                    binIndex = np.digitize( measurementValue, bin_edges )
+                    binName = '{0}_{1}-{2}'.format(binPrefix, bin_edges[binIndex-1], bin_edges[binIndex])
                     bin_dict[binName] += duration
+                    #print measurementValue, duration, binIndex, binName
+                except IndexError:
+                    print "Value {0} falls outside of bins for {1}".format(measurementValue, binPrefix)
 
     @staticmethod
     def ProcessDataPointFile(file):
@@ -106,7 +107,6 @@ class DataProcessor:
         print 'Processing file:', file
         ### read in data dictionary, convert to numpy array
         data_dict = pickle.load( open(file, "r") )
-        #features = ["poi", "salary", "total_payments", 'bonus', 'deferred_income', 'total_stock_value', 'expenses', 'exercised_stock_options', 'other', 'long_term_incentive', 'restricted_stock','to_messages', 'from_poi_to_this_person', 'from_messages', 'from_this_person_to_poi', 'shared_receipt_with_poi']
 
         # Normalize / flatten this data point
         data_point = {}

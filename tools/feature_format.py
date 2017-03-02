@@ -8,10 +8,10 @@
     n--no. of key-value pairs in dictonary
     k--no. of features being extracted
 
-    dictionary keys are names of persons in dataset
+    dictionary keys are dates of races in dataset
     dictionary values are dictionaries, where each
         key-value pair in the dict is the name
-        of a feature, and its value for that person
+        of a feature, and its value for that race
 
     In addition to converting a dictionary to a numpy 
     array, you may want to separate the labels from the
@@ -64,23 +64,30 @@ def featureFormat( dictionary, features, remove_NaN=True, remove_all_zeroes=True
     for key in keys:
         tmp_list = []
         for feature in features:
-            try:
-                dictionary[key][feature]
-            except KeyError:
-                print "error: key ", feature, " not present"
-                return
-            value = dictionary[key][feature]
-            if value=="NaN" and remove_NaN:
-                value = 0
-            tmp_list.append( float(value) )
+            # if this feature name is a wildcard, then look for all the features with this name
+            if feature.find('*') != -1:
+                feature_name_pattern = feature[0: feature.find('*') - 1]
+                for feature_x in filter( lambda k: k.find(feature_name_pattern)!=-1, dictionary[key].keys()):
+                    value = dictionary[key][feature_x]
+                    if value=="NaN" and remove_NaN:
+                        value = 0
+                    tmp_list.append( float(value) )
+            else:
+
+                try:
+                    dictionary[key][feature]
+                except KeyError:
+                    print "error: key ", feature, " not present"
+                    return
+                value = dictionary[key][feature]
+                if value=="NaN" and remove_NaN:
+                    value = 0
+                tmp_list.append( float(value) )
 
         # Logic for deciding whether or not to add the data point.
         append = True
-        # exclude 'poi' class as criteria.
-        if features[0] == 'poi':
-            test_list = tmp_list[1:]
-        else:
-            test_list = tmp_list
+        test_list = tmp_list
+
         ### if all features are zero and you want to remove
         ### data points that are all zero, do that here
         if remove_all_zeroes:
