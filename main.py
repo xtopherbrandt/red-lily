@@ -4,10 +4,15 @@ from stravalib.exc import ActivityUploadFailed
 import os, sys
 from requests.exceptions import HTTPError
 from datetime import datetime, date, timedelta
+import dateutil.parser
 import pickle
 from units import *
 import xml.etree.ElementTree as ET
 import shutil
+import json
+from units import *
+from units.predefined import define_units
+import re
 
 # Next we create an instance of this class. 
 
@@ -256,9 +261,12 @@ def processGpxFile(gpx_file_name):
         extenstions_elem = root.findall('.//gpxns:trkpt/gpxns:extensions', ns)
         for elem in extenstions_elem:
             trackpointExts_elem = elem.find('./extns:TrackPointExtension', ns3)
-            hr = trackpointExts_elem.find('./extns:hr', ns3).text
-            elem.remove(trackpointExts_elem)
-            ET.SubElement(elem, 'heartrate').text = hr
+            if trackpointExts_elem is not None:
+                hr_elem = trackpointExts_elem.find('./extns:hr', ns3)
+                if hr_elem is not None:
+                    hr = hr_elem.text
+                    ET.SubElement(elem, 'heartrate').text = hr
+                elem.remove(trackpointExts_elem)
 
         # Log what we know
         app.logger.debug('{0}: {1} {2} {3} {4}-->{5} {6} {7}'.format(gpx_file_name, time, name, desc, garmin_type, strava_type, external_id, data_type))
@@ -278,8 +286,9 @@ def processGpxFile(gpx_file_name):
 
     return time, name, desc, garmin_type, strava_type, external_id, data_type
 
+
 def garminTypeToStravaType( garminType ):
-    if type(garminType) != str:
+    if type(garminType) != str and type(garminType) != unicode:
         app.logger.debug("invalid type {0}".format( type(garminType)))
         return None
     elif garminType.find('running') != -1:
@@ -310,3 +319,109 @@ def garminTypeToStravaType( garminType ):
         return 'backcountryski'
     else:
         return None
+
+@app.route('/activities/files/recreate')
+def activitiesFilesRecreate():
+    # if we don't have an access token, reauthorize first
+    if client.access_token == None:
+        app.logger.debug("Reauthorizing...")
+        return redirect(url_for('authorize'))
+
+    # Create a mapping between the garmin ID and the strava ID for all activities
+    # this was added to allow re-uploading of activity files
+    # 
+    # The external id in Strava is set to the file name if the activity was uploaded either manually or through the API
+    #  it is set to garmin_push_{garmin_id} if the activity was pushed from garmin directly
+    #  and for a short period of time between Nov and Dec 2015 it was set to the activity start time, 
+    #   and to make things worse, the start time given to Strave by Garmin could differ by seconds from the start time provided in garmin downloads  :-(
+    activity_map = {}
+    activity_set = client.get_activities( )
+    for activity in activity_set:
+        if activity.external_id is not None:
+            ids = re.compile('\d{5,}').findall(activity.external_id)
+            if (len(ids) != 1):
+                timestamp_id = activity.start_date.strftime("%Y-%m-%d %H:%M")
+                activity_map[timestamp_id] = activity.id
+            else:
+                activity_map[ids[0]] = activity.id
+
+    # Get the file name from the query string
+    file_directory = request.args.get('dir')
+    completed_files = []
+
+    files = os.listdir(file_directory)
+
+    completed_files =  []
+
+    # For each file in the directory
+    for json_file in files:
+        
+        # If this is a file
+        if ( os.path.isfile( os.path.join(file_directory, json_file) ) ):
+            
+            # If this activity isn't in the map 
+            # then try to create an activity from the json data
+            garmin_id = re.compile('\d{4,}').findall(json_file)[0]
+
+            if garmin_id not in activity_map :
+                
+                # Open the file and load the data
+                with open( os.path.join(file_directory, json_file), 'r') as activity_file:
+                    activity = json.load( activity_file )
+
+                print activity['activitySummary']['BeginTimestamp']['value']
+                print dateutil.parser.parse(activity['activitySummary']['BeginTimestamp']['value']).strftime("%Y-%m-%d %H:%M")
+
+                # double check that an activity with this start date isn't in the activity map
+                if dateutil.parser.parse(activity['activitySummary']['BeginTimestamp']['value']).strftime("%Y-%m-%d %H:%M") in activity_map :
+                    print 'Activity already exists with timestamp as external ID'
+                                     
+                    # Move it to Unprocessed
+                    shutil.move(os.path.join(file_directory, json_file), os.path.join(file_directory, 'Unprocessed'))
+                else:
+
+                    app.logger.debug( 'Creating activity for {0}'.format( json_file ))
+
+                    define_units()
+
+                    name=activity['activityName']
+                    activity_type = garminTypeToStravaType(activity['activityType']['key'])
+                    start_date_local = datetime.strptime( activity['activitySummary']['BeginTimestamp']['display'], "%a, %b %d, %Y %I:%M %p" )
+                    
+                    if 'SumDuration' in activity['activitySummary']:
+                        elapsed_time = int(round(float(activity['activitySummary']['SumDuration']['value']),0))
+                    else:
+                        elapsed_time = 0
+
+                    description = activity['activityDescription'] + 'From Garmin: {0}'.format(garmin_id)
+                    
+                    if 'SumDistance' in activity['activitySummary']:
+                        distance = unit(activity['activitySummary']['SumDistance']['unitAbbr'])(float(activity['activitySummary']['SumDistance']['value']))
+                    else:
+                        distance = 0
+
+                    print name, activity_type, start_date_local, elapsed_time, description, distance
+
+                    try:
+                        client.create_activity(name=name, activity_type=activity_type, start_date_local=start_date_local, elapsed_time=elapsed_time, description=description, distance=distance)
+                                        
+                        # Move it to Done
+                        shutil.move(os.path.join(file_directory, json_file), os.path.join(file_directory, 'Done'))
+
+                        # Record it
+                        f = {'fileName':json_file, 'name': name, 'desc': description, 'garmin_type': activity['activityType']['key'], 'strava_type': activity_type, 'external_id': '' }
+                        completed_files.append(f)
+                                
+                    except Exception as e:
+                        import traceback
+                        app.logger.debug('Exception while processing file:{0} : {1}'.format(gpx_file, e))
+                        exc_type, exc_value, exc_traceback = sys.exc_info()
+                        app.logger.debug(traceback.format_exception(exc_type, exc_value, exc_traceback ))
+                        return str(e)
+            else:
+                                    
+                    # Move it to Unprocessed
+                    shutil.move(os.path.join(file_directory, json_file), os.path.join(file_directory, 'Unprocessed'))
+
+
+    return render_template('show_uploaded_files.html', files=completed_files)

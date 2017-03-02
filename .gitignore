@@ -8,3 +8,5 @@ docs/_build/
 test.ini
 *.gpx
 *.pkl
+*.json
+
