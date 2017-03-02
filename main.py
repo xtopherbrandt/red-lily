@@ -18,8 +18,7 @@ import re
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
-access_token = ''
-client = Client()
+
 
 
 def saveDataPoint(raceActivity):
@@ -58,28 +57,53 @@ def saveDataPoint(raceActivity):
 
 @app.route('/')
 def hello_world():
+    if 'access_token' not in session:
+        return redirect(url_for('authorize'))
     return render_template('helloworld.htm')
+
+@app.route('/hidden')
+def hidden():
+
+    if 'access_token' not in session:
+        return redirect(url_for('authorize'))
+    
+    client = Client( session['access_token'] )
+
+    if client.get_athlete().email == 'xtopher.brandt@gmail.com':
+        return render_template('commands.htm')
+    else:
+        return redirect(url_for('hello_world'))
 
 @app.route('/authorize')
 def authorize():
-    url = client.authorization_url(client_id=16323, redirect_uri='http://127.0.0.1:8887/exchange', scope='view_private,write')
+        
+    client = Client( )
+
+    url = client.authorization_url(client_id=16323, redirect_uri='http://127.0.0.1:8887/exchange', scope='view_private')
     return redirect(url)
 
 @app.route('/exchange', methods=['GET'])
 def exchange():
+            
+    client = Client( )
+
     code = request.args.get('code')
     access_token = client.exchange_code_for_token(client_id=16323, client_secret='acc979731b8be9933f46ab89f9d8094c705a3503', code=code)
-    client.access_token = access_token
+
     session['logged_in'] = True
+    session['access_token'] = access_token
     app.logger.debug('Access Token: %s', access_token)
-    return render_template('commands.htm')
+    return redirect(url_for('hidden'))
 
 @app.route('/activities', methods=['GET'])
 def activities():
     # if we don't have an access token, reauthorize first
-    if client.access_token == None:
+    if 'access_token' not in session:
         app.logger.debug("Reauthorizing...")
         return redirect(url_for('authorize'))
+
+    
+    client = Client( session['access_token'] )
 
     try:
         activity_set = client.get_activities( before='2014-12-01', after='2008-01-01' )
@@ -99,9 +123,12 @@ def activities():
 @app.route('/generateDataPoints', methods=['GET'])
 def generateDataPoints():
     # if we don't have an access token, reauthorize first
-    if client.access_token == None:
+    if 'access_token' not in session:
         app.logger.debug("Reauthorizing...")
         return redirect(url_for('authorize'))
+
+    
+    client = Client( session['access_token'] )
 
     try:
         app.logger.debug('Searching...')
@@ -119,9 +146,12 @@ def generateDataPoints():
 @app.route('/activities/stream', methods=['GET'])
 def activitiesStream():
     # if we don't have an access token, reauthorize first
-    if client.access_token == None:
+    if 'access_token' not in session:
         app.logger.debug("Reauthorizing...")
         return redirect(url_for('authorize'))
+
+    
+    client = Client( session['access_token'] )
 
     try:
         stream = client.get_activity_streams(activity_id = 856784749, types=['time','distance','altitude', 'velocity_smooth','heartrate','cadence','grade_smooth'], resolution='high')
@@ -145,9 +175,11 @@ def activitiesFilesBatch():
     BIG SECURITY RISK
     '''
     # if we don't have an access token, reauthorize first
-    if client.access_token == None:
+    if 'access_token' not in session:
         app.logger.debug("Reauthorizing...")
         return redirect(url_for('authorize'))
+    
+    client = Client( session['access_token'] )
 
     # Create a mapping between the garmin ID and the strava ID for all activities
     # this was added to allow re-uploading of activity files
@@ -203,9 +235,11 @@ def activitiesFilesUpload():
     files = []
 
     # if we don't have an access token, reauthorize first
-    if client.access_token == None:
+    if 'access_token' not in session:
         app.logger.debug("Reauthorizing...")
         return redirect(url_for('authorize'))
+    
+    client = Client( session['access_token'] )
 
     try:
         # Get the file name from the query string
@@ -323,9 +357,11 @@ def garminTypeToStravaType( garminType ):
 @app.route('/activities/files/recreate')
 def activitiesFilesRecreate():
     # if we don't have an access token, reauthorize first
-    if client.access_token == None:
+    if 'access_token' not in session:
         app.logger.debug("Reauthorizing...")
         return redirect(url_for('authorize'))
+    
+    client = Client( session['access_token'] )
 
     # Create a mapping between the garmin ID and the strava ID for all activities
     # this was added to allow re-uploading of activity files
