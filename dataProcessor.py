@@ -95,9 +95,12 @@ class DataProcessor:
             if measurementValue is not None:
                 try:
                     binIndex = np.digitize( measurementValue, bin_edges )
-                    binName = '{0}_{1}-{2}'.format(binPrefix, bin_edges[binIndex-1], bin_edges[binIndex])
-                    bin_dict[binName] += duration
-                    #print measurementValue, duration, binIndex, binName
+                    if binIndex > 0 and binIndex < bin_edges.size :
+                        binName = '{0}_{1}-{2}'.format(binPrefix, bin_edges[binIndex-1], bin_edges[binIndex])
+                        bin_dict[binName] += duration
+                        #print measurementValue, duration, binIndex, binName
+                    else:
+                        print "Value {0} falls outside of bins for {1}".format(measurementValue, binPrefix)
                 except IndexError:
                     print "Value {0} falls outside of bins for {1}".format(measurementValue, binPrefix)
 
@@ -127,9 +130,9 @@ class DataProcessor:
             data_point['workout_duration'] += workout['total_time'].total_seconds()
             
             if 'velocity_smooth_stream' in workout:
-                DataProcessor.binMeasurements(data_point, workout['velocity_smooth_stream'], workout['time_stream'], 'velocity', minAllowed=1.0, maxAllowed=10.0 )
+                DataProcessor.binMeasurements(data_point, workout['velocity_smooth_stream'], workout['time_stream'], 'velocity', rangeMin=1.0, rangeMax=10.0, binIncrement=0.1 )
             if 'cadence_stream' in workout:
-                DataProcessor.binMeasurements(data_point, workout['cadence_stream'], workout['time_stream'], 'cadence')
+                DataProcessor.binMeasurements(data_point, workout['cadence_stream'], workout['time_stream'], 'cadence', rangeMin=50, rangeMax=300, binIncrement=2)
             
         print data_point
         DataProcessor._sanityCheck( data_point, data_dict )
